@@ -8,7 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(SFML 2.5 COMPONENTS graphics window system REQUIRED)
 
 # Add your executable and source files
-add_executable(TrafficSim src/main.cpp src/kdTree.cpp)
+add_executable(TrafficSim src/main.cpp src/kdTree.cpp src/curves.cpp src/CurveViewer.cpp)
 
 # Target include directories
 target_include_directories(TrafficSim PRIVATE include)
