@@ -15,9 +15,8 @@ RoadViewer::RoadViewer(bool fullscreen, const std::string& title, unsigned int w
 
     network.loadSampleNetwork(window.getSize().x, window.getSize().y);
 
-    print::info("RoadViewer Network Editor initialized.");
-    print::info("Tools: [1] Select/Move | [2] Straight Road | [3] Curved Road | [4] Intersection | [5] Gateway");
-    print::info("Interactive GUI toolbar enabled in the top-left corner.");
+    print::info("RoadViewer Network Editor initialized with Two-Way and One-Way road support.");
+    print::info("Tools: [1] Select | [2] 2-Way Straight | [3] 2-Way Curved | [6] 1-Way Straight | [7] 1-Way Curved | [4] Intersection | [5] Gateway");
 }
 
 RoadViewer::RoadViewer(unsigned int width, unsigned int height, const std::string& title, bool fullscreen)
@@ -30,7 +29,7 @@ RoadViewer::RoadViewer(unsigned int width, unsigned int height, const std::strin
 
 void RoadViewer::initWindow(bool fullscreen) {
     sf::ContextSettings settings;
-    settings.antialiasingLevel = 8;
+    settings.antialiasingLevel = roadViewer::dimensions::antialiasingLevel;
     isFullscreen = fullscreen;
 
     if (isFullscreen) {
@@ -38,7 +37,7 @@ void RoadViewer::initWindow(bool fullscreen) {
     } else {
         window.create(sf::VideoMode(savedWidth, savedHeight), windowTitle, sf::Style::Default, settings);
     }
-    window.setFramerateLimit(60);
+    window.setFramerateLimit(roadViewer::dimensions::frameRateLimit);
 }
 
 void RoadViewer::toggleFullscreen() {
@@ -63,22 +62,23 @@ void RoadViewer::tryLoadFont() {
 }
 
 void RoadViewer::initGUIButtons() {
+    using namespace roadViewer::dimensions;
     guiButtons.clear();
-    guiButtons.push_back({ToolMode::SelectMove, "Select / Move", "[1/V]", sf::FloatRect(0, 0, 142.f, 32.f)});
-    guiButtons.push_back({ToolMode::StraightRoad, "Straight Road", "[2/R]", sf::FloatRect(0, 0, 142.f, 32.f)});
-    guiButtons.push_back({ToolMode::CurvedRoad, "Curved Road", "[3/C]", sf::FloatRect(0, 0, 142.f, 32.f)});
-    guiButtons.push_back({ToolMode::AddIntersection, "+ Intersection", "[4/I]", sf::FloatRect(0, 0, 142.f, 32.f)});
-    guiButtons.push_back({ToolMode::AddGateway, "+ Gateway", "[5/G]", sf::FloatRect(0, 0, 142.f, 32.f)});
+    guiButtons.push_back({ToolMode::SelectMove, "Select / Move", "[1/V]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::StraightRoad, "2-Way Straight", "[2/R]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::CurvedRoad, "2-Way Curved", "[3/C]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::StraightOneWayRoad, "1-Way Straight", "[6/O]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::CurvedOneWayRoad, "1-Way Curved", "[7/U]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::AddIntersection, "+ Intersect", "[4/I]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
+    guiButtons.push_back({ToolMode::AddGateway, "+ Gateway", "[5/G]", sf::FloatRect(0, 0, btnWidth, btnHeight)});
 }
 
 void RoadViewer::updateButtonLayout(float topY) {
-    float startX = 14.0f;
-    float gap = 8.0f;
-    float btnWidth = 142.0f;
-    float btnHeight = 32.0f;
+    using namespace roadViewer::dimensions;
+    float startX = hudPaddingX;
 
     for (size_t i = 0; i < guiButtons.size(); ++i) {
-        guiButtons[i].bounds = sf::FloatRect(startX + i * (btnWidth + gap), topY, btnWidth, btnHeight);
+        guiButtons[i].bounds = sf::FloatRect(startX + i * (btnWidth + btnGap), topY, btnWidth, btnHeight);
     }
 }
 
@@ -100,13 +100,19 @@ void RoadViewer::setToolMode(ToolMode mode) {
 
     switch (currentTool) {
         case ToolMode::SelectMove:
-            print::info("Active Tool: [Select & Move] - Click/drag nodes, or select curved roads to adjust control handles.");
+            print::info("Active Tool: [Select & Move] - Click/drag nodes or road handles.");
             break;
         case ToolMode::StraightRoad:
             print::info("Active Tool: [Straight Two-Way Road] - Click start node, then click end node.");
             break;
         case ToolMode::CurvedRoad:
-            print::info("Active Tool: [Curved Two-Way Road] - Step 1: Click start node.");
+            print::info("Active Tool: [Curved Two-Way Road] - Click Start -> Handle 1 -> Handle 2 -> End Node.");
+            break;
+        case ToolMode::StraightOneWayRoad:
+            print::info("Active Tool: [Straight One-Way Road] - Click start node (origin), then click target node (destination).");
+            break;
+        case ToolMode::CurvedOneWayRoad:
+            print::info("Active Tool: [Curved One-Way Road] - Click Start -> Handle 1 -> Handle 2 -> End Node.");
             break;
         case ToolMode::AddIntersection:
             print::info("Active Tool: [Add Intersection Node] - Click empty canvas to create, or click a Gateway to convert it.");
@@ -185,13 +191,19 @@ void RoadViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f& 
             handleSelectMoveClick(mousePos);
             break;
         case ToolMode::StraightRoad:
-            handleStraightRoadClick(mousePos);
+            handleStraightRoadClick(mousePos, false);
             break;
         case ToolMode::CurvedRoad:
-            handleCurvedRoadClick(mousePos);
+            handleCurvedRoadClick(mousePos, false);
+            break;
+        case ToolMode::StraightOneWayRoad:
+            handleStraightRoadClick(mousePos, true);
+            break;
+        case ToolMode::CurvedOneWayRoad:
+            handleCurvedRoadClick(mousePos, true);
             break;
         case ToolMode::AddIntersection: {
-            int existingNode = network.findNodeAt(mousePos, 8.0f);
+            int existingNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeClickExtraRadius);
             if (existingNode != -1) {
                 auto* n = network.getNode(static_cast<size_t>(existingNode));
                 if (n && n->isGateway()) {
@@ -199,13 +211,13 @@ void RoadViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f& 
                 }
                 selectedNodeId = existingNode;
             } else {
-                size_t id = network.createIntersection(mousePos, 26.0f);
+                size_t id = network.createIntersection(mousePos, roadNetwork::defaults::intersectionRadius);
                 selectedNodeId = static_cast<int>(id);
             }
             break;
         }
         case ToolMode::AddGateway: {
-            int existingNode = network.findNodeAt(mousePos, 8.0f);
+            int existingNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeClickExtraRadius);
             if (existingNode != -1) {
                 auto* n = network.getNode(static_cast<size_t>(existingNode));
                 if (n && n->isIntersection()) {
@@ -213,7 +225,7 @@ void RoadViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f& 
                 }
                 selectedNodeId = existingNode;
             } else {
-                size_t id = network.createGateway(mousePos, 20.0f);
+                size_t id = network.createGateway(mousePos, roadNetwork::defaults::gatewayRadius);
                 selectedNodeId = static_cast<int>(id);
             }
             break;
@@ -224,7 +236,6 @@ void RoadViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f& 
 void RoadViewer::handleMouseMove(const sf::Vector2f& mousePos) {
     currentMousePos = mousePos;
 
-    // Update hovered GUI button
     hoveredButtonIndex = -1;
     if (showHUD) {
         for (size_t i = 0; i < guiButtons.size(); ++i) {
@@ -235,10 +246,11 @@ void RoadViewer::handleMouseMove(const sf::Vector2f& mousePos) {
         }
     }
 
-    hoveredNodeId = network.findNodeAt(mousePos, 8.0f);
+    hoveredNodeId = network.findNodeAt(mousePos, roadViewer::dimensions::nodeClickExtraRadius);
 
     if (selectedRoadId != -1) {
-        hoveredHandleIndex = network.findRoadControlPointAt(static_cast<size_t>(selectedRoadId), mousePos, 14.0f);
+        hoveredHandleIndex = network.findRoadControlPointAt(static_cast<size_t>(selectedRoadId), mousePos,
+                                                            roadViewer::dimensions::handleClickRadius);
     } else {
         hoveredHandleIndex = 0;
     }
@@ -260,7 +272,8 @@ void RoadViewer::handleMouseRelease(sf::Mouse::Button button) {
 void RoadViewer::handleSelectMoveClick(const sf::Vector2f& mousePos) {
     // 1. Check if clicked on a curved road control point
     if (selectedRoadId != -1) {
-        int clickedHandle = network.findRoadControlPointAt(static_cast<size_t>(selectedRoadId), mousePos, 14.0f);
+        int clickedHandle = network.findRoadControlPointAt(static_cast<size_t>(selectedRoadId), mousePos,
+                                                           roadViewer::dimensions::handleClickRadius);
         if (clickedHandle != 0) {
             draggedHandleIndex = clickedHandle;
             draggedNodeId = -1;
@@ -269,7 +282,7 @@ void RoadViewer::handleSelectMoveClick(const sf::Vector2f& mousePos) {
     }
 
     // 2. Check if clicked on a node
-    int clickedNode = network.findNodeAt(mousePos, 8.0f);
+    int clickedNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeClickExtraRadius);
     if (clickedNode != -1) {
         selectedNodeId = clickedNode;
         draggedNodeId = clickedNode;
@@ -279,7 +292,7 @@ void RoadViewer::handleSelectMoveClick(const sf::Vector2f& mousePos) {
     }
 
     // 3. Check if clicked on a road
-    int clickedRoad = network.findRoadAt(mousePos, 18.0f);
+    int clickedRoad = network.findRoadAt(mousePos, roadViewer::dimensions::roadClickTolerance);
     if (clickedRoad != -1) {
         selectedRoadId = clickedRoad;
         selectedNodeId = -1;
@@ -296,14 +309,14 @@ void RoadViewer::handleSelectMoveClick(const sf::Vector2f& mousePos) {
     draggedHandleIndex = 0;
 }
 
-void RoadViewer::handleStraightRoadClick(const sf::Vector2f& mousePos) {
-    int clickedNode = network.findNodeAt(mousePos, 10.0f);
+void RoadViewer::handleStraightRoadClick(const sf::Vector2f& mousePos, bool isOneWay) {
+    int clickedNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeRoadSnapRadius);
     size_t nodeId = 0;
 
     if (clickedNode != -1) {
         nodeId = static_cast<size_t>(clickedNode);
     } else {
-        nodeId = network.createIntersection(mousePos, 26.0f);
+        nodeId = network.createIntersection(mousePos, roadNetwork::defaults::intersectionRadius);
     }
 
     if (roadCreationStartNodeId == 0) {
@@ -312,20 +325,29 @@ void RoadViewer::handleStraightRoadClick(const sf::Vector2f& mousePos) {
         print::info("Road Start Node set to " + std::to_string(nodeId) + ". Now click target node (or empty space).");
     } else {
         if (roadCreationStartNodeId != nodeId) {
-            size_t roadId = network.createStraightTwoWayRoad(roadCreationStartNodeId, nodeId, 5.0f, 14.0f);
+            size_t roadId = 0;
+            if (isOneWay) {
+                roadId = network.createStraightOneWayRoad(roadCreationStartNodeId, nodeId,
+                                                         roadNetwork::defaults::speedLimit,
+                                                         roadNetwork::defaults::laneWidth);
+            } else {
+                roadId = network.createStraightTwoWayRoad(roadCreationStartNodeId, nodeId,
+                                                         roadNetwork::defaults::speedLimit,
+                                                         roadNetwork::defaults::laneWidth);
+            }
             selectedRoadId = static_cast<int>(roadId);
         }
         roadCreationStartNodeId = 0;
     }
 }
 
-void RoadViewer::handleCurvedRoadClick(const sf::Vector2f& mousePos) {
+void RoadViewer::handleCurvedRoadClick(const sf::Vector2f& mousePos, bool isOneWay) {
     if (curvedRoadStep == 0) {
-        int clickedNode = network.findNodeAt(mousePos, 10.0f);
+        int clickedNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeRoadSnapRadius);
         if (clickedNode != -1) {
             roadCreationStartNodeId = static_cast<size_t>(clickedNode);
         } else {
-            roadCreationStartNodeId = network.createIntersection(mousePos, 26.0f);
+            roadCreationStartNodeId = network.createIntersection(mousePos, roadNetwork::defaults::intersectionRadius);
         }
         curvedRoadStep = 1;
         print::info("Curved Road - Step 2/4: Click to place Curve Control Handle 1.");
@@ -338,20 +360,31 @@ void RoadViewer::handleCurvedRoadClick(const sf::Vector2f& mousePos) {
         curvedRoadStep = 3;
         print::info("Curved Road - Step 4/4: Click to select or create End Node.");
     } else if (curvedRoadStep == 3) {
-        int clickedNode = network.findNodeAt(mousePos, 10.0f);
+        int clickedNode = network.findNodeAt(mousePos, roadViewer::dimensions::nodeRoadSnapRadius);
         size_t endNodeId = 0;
         if (clickedNode != -1) {
             endNodeId = static_cast<size_t>(clickedNode);
         } else {
-            endNodeId = network.createIntersection(mousePos, 26.0f);
+            endNodeId = network.createIntersection(mousePos, roadNetwork::defaults::intersectionRadius);
         }
 
         if (roadCreationStartNodeId != endNodeId) {
-            size_t roadId = network.createCurvedTwoWayRoad(
-                roadCreationStartNodeId, endNodeId,
-                curveHandle1, curveHandle2,
-                5.0f, 14.0f
-            );
+            size_t roadId = 0;
+            if (isOneWay) {
+                roadId = network.createCurvedOneWayRoad(
+                    roadCreationStartNodeId, endNodeId,
+                    curveHandle1, curveHandle2,
+                    roadNetwork::defaults::speedLimit,
+                    roadNetwork::defaults::laneWidth
+                );
+            } else {
+                roadId = network.createCurvedTwoWayRoad(
+                    roadCreationStartNodeId, endNodeId,
+                    curveHandle1, curveHandle2,
+                    roadNetwork::defaults::speedLimit,
+                    roadNetwork::defaults::laneWidth
+                );
+            }
             selectedRoadId = static_cast<int>(roadId);
         }
         cancelCurrentAction();
@@ -376,6 +409,10 @@ void RoadViewer::handleKeyPress(sf::Keyboard::Key key) {
         setToolMode(ToolMode::StraightRoad);
     } else if (key == sf::Keyboard::Num3 || key == sf::Keyboard::C) {
         setToolMode(ToolMode::CurvedRoad);
+    } else if (key == sf::Keyboard::Num6 || key == sf::Keyboard::O) {
+        setToolMode(ToolMode::StraightOneWayRoad);
+    } else if (key == sf::Keyboard::Num7 || key == sf::Keyboard::U) {
+        setToolMode(ToolMode::CurvedOneWayRoad);
     } else if (key == sf::Keyboard::Num4) {
         setToolMode(ToolMode::AddIntersection);
     } else if (key == sf::Keyboard::Num5) {
@@ -432,7 +469,7 @@ void RoadViewer::update(float /* dt */) {
 }
 
 void RoadViewer::render() {
-    window.clear(sf::Color(20, 22, 28));
+    window.clear(roadViewer::colors::background);
 
     // 1. Render dark asphalt road corridor base
     if (showRoadSurfaces) {
@@ -468,38 +505,58 @@ void RoadViewer::render() {
 }
 
 void RoadViewer::renderRoadSurfaces() {
+    using namespace roadViewer::dimensions;
     for (const auto& [id, road] : network.getRoads()) {
         const auto* segFwd = network.getSegment(road.forwardSegmentId);
-        const auto* segBwd = network.getSegment(road.backwardSegmentId);
-        if (!segFwd || !segBwd || segFwd->spline.empty()) continue;
+        if (!segFwd || segFwd->spline.empty()) continue;
 
         sf::VertexArray roadStrip(sf::TriangleStrip);
-        const int samples = 30;
-        const float halfTotalWidth = road.laneWidth * 1.35f;
+        const int samples = roadRenderSamples;
+        sf::Color asphaltColor = roadViewer::colors::asphalt;
 
-        for (int i = 0; i <= samples; ++i) {
-            float t = static_cast<float>(i) / samples;
-            sf::Vector2f posFwd = segFwd->spline.eval(t);
-            sf::Vector2f posBwd = segBwd->spline.eval(1.0f - t);
-            sf::Vector2f center = (posFwd + posBwd) * 0.5f;
+        if (road.isOneWay()) {
+            // One-Way Road: single lane corridor
+            const float halfWidth = road.laneWidth * asphaltOneWayMultiplier;
+            for (int i = 0; i <= samples; ++i) {
+                float t = static_cast<float>(i) / samples;
+                sf::Vector2f center = segFwd->spline.eval(t);
+                sf::Vector2f tan = segFwd->spline.evalTangent(t);
+                float len = std::hypot(tan.x, tan.y);
+                sf::Vector2f n = len > 1e-4f ? sf::Vector2f(-tan.y / len, tan.x / len) : sf::Vector2f(0, 1);
 
-            sf::Vector2f tan = segFwd->spline.evalTangent(t);
-            float len = std::hypot(tan.x, tan.y);
-            sf::Vector2f n = len > 1e-4f ? sf::Vector2f(-tan.y / len, tan.x / len) : sf::Vector2f(0, 1);
+                roadStrip.append(sf::Vertex(center + n * halfWidth, asphaltColor));
+                roadStrip.append(sf::Vertex(center - n * halfWidth, asphaltColor));
+            }
+        } else {
+            // Two-Way Road: two lane corridor
+            const auto* segBwd = network.getSegment(road.backwardSegmentId);
+            if (!segBwd || segBwd->spline.empty()) continue;
 
-            sf::Color asphaltColor(34, 36, 44);
-            roadStrip.append(sf::Vertex(center + n * halfTotalWidth, asphaltColor));
-            roadStrip.append(sf::Vertex(center - n * halfTotalWidth, asphaltColor));
+            const float halfTotalWidth = road.laneWidth * asphaltWidthMultiplier;
+            for (int i = 0; i <= samples; ++i) {
+                float t = static_cast<float>(i) / samples;
+                sf::Vector2f posFwd = segFwd->spline.eval(t);
+                sf::Vector2f posBwd = segBwd->spline.eval(1.0f - t);
+                sf::Vector2f center = (posFwd + posBwd) * 0.5f;
+
+                sf::Vector2f tan = segFwd->spline.evalTangent(t);
+                float len = std::hypot(tan.x, tan.y);
+                sf::Vector2f n = len > 1e-4f ? sf::Vector2f(-tan.y / len, tan.x / len) : sf::Vector2f(0, 1);
+
+                roadStrip.append(sf::Vertex(center + n * halfTotalWidth, asphaltColor));
+                roadStrip.append(sf::Vertex(center - n * halfTotalWidth, asphaltColor));
+            }
         }
         window.draw(roadStrip);
     }
 }
 
 void RoadViewer::renderLanes() {
+    using namespace roadViewer::dimensions;
     for (const auto& [id, seg] : network.getSegments()) {
         if (seg.spline.empty()) continue;
 
-        sf::VertexArray vertices = seg.spline.getVertices(30);
+        sf::VertexArray vertices = seg.spline.getVertices(roadRenderSamples);
         for (size_t i = 0; i < vertices.getVertexCount(); ++i) {
             vertices[i].color = seg.laneColor;
         }
@@ -508,15 +565,16 @@ void RoadViewer::renderLanes() {
         // Direction arrow
         sf::Vector2f midPos = seg.spline.eval(0.5f);
         sf::Vector2f midTan = seg.spline.evalTangent(0.5f);
-        renderLaneDirectionArrow(midPos, midTan, 7.0f, seg.laneColor);
+        renderLaneDirectionArrow(midPos, midTan, laneArrowSize, seg.laneColor);
     }
 }
 
 void RoadViewer::renderTurnLanes() {
+    using namespace roadViewer::dimensions;
     for (const auto& turn : network.getTurnLanes()) {
         if (turn.spline.empty()) continue;
 
-        sf::VertexArray vertices = turn.spline.getVertices(24);
+        sf::VertexArray vertices = turn.spline.getVertices(turnRenderSamples);
         for (size_t i = 0; i < vertices.getVertexCount(); ++i) {
             vertices[i].color = turn.laneColor;
         }
@@ -525,11 +583,12 @@ void RoadViewer::renderTurnLanes() {
         // Direction arrow for turn lane
         sf::Vector2f midPos = turn.spline.eval(0.5f);
         sf::Vector2f midTan = turn.spline.evalTangent(0.5f);
-        renderLaneDirectionArrow(midPos, midTan, 5.5f, turn.laneColor);
+        renderLaneDirectionArrow(midPos, midTan, turnArrowSize, turn.laneColor);
     }
 }
 
 void RoadViewer::renderLaneDirectionArrow(const sf::Vector2f& pos, const sf::Vector2f& dir, float size, sf::Color color) {
+    using namespace roadViewer::dimensions;
     float len = std::hypot(dir.x, dir.y);
     if (len < 1e-4f) return;
 
@@ -539,14 +598,17 @@ void RoadViewer::renderLaneDirectionArrow(const sf::Vector2f& pos, const sf::Vec
     sf::ConvexShape arrow;
     arrow.setPointCount(3);
     arrow.setPoint(0, pos + u * size);
-    arrow.setPoint(1, pos - u * (size * 0.7f) + n * (size * 0.6f));
-    arrow.setPoint(2, pos - u * (size * 0.7f) - n * (size * 0.6f));
+    arrow.setPoint(1, pos - u * (size * arrowWingRatio) + n * (size * arrowSpreadRatio));
+    arrow.setPoint(2, pos - u * (size * arrowWingRatio) - n * (size * arrowSpreadRatio));
     arrow.setFillColor(color);
 
     window.draw(arrow);
 }
 
 void RoadViewer::renderNodeBases() {
+    using namespace roadViewer::colors;
+    using namespace roadViewer::dimensions;
+
     for (const auto& [id, node] : network.getNodes()) {
         bool isHovered = (static_cast<int>(id) == hoveredNodeId);
         bool isSelected = (static_cast<int>(id) == selectedNodeId);
@@ -556,15 +618,15 @@ void RoadViewer::renderNodeBases() {
         circle.setPosition(node->getPosition());
 
         if (node->isIntersection()) {
-            circle.setFillColor(sf::Color(32, 36, 46));
-            circle.setOutlineColor(isSelected ? sf::Color(80, 255, 120) :
-                                  (isHovered ? sf::Color(100, 220, 255) : sf::Color(80, 100, 130)));
-            circle.setOutlineThickness(isSelected || isHovered ? 2.5f : 1.5f);
+            circle.setFillColor(intersectionFill);
+            circle.setOutlineColor(isSelected ? intersectionOutlineSelected :
+                                  (isHovered ? intersectionOutlineHover : intersectionOutline));
+            circle.setOutlineThickness(isSelected || isHovered ? nodeOutlineHighlight : nodeOutlineNormal);
         } else {
-            circle.setFillColor(sf::Color(55, 32, 36));
-            circle.setOutlineColor(isSelected ? sf::Color(80, 255, 120) :
-                                  (isHovered ? sf::Color(255, 180, 100) : sf::Color(180, 80, 90)));
-            circle.setOutlineThickness(isSelected || isHovered ? 2.5f : 1.5f);
+            circle.setFillColor(gatewayFill);
+            circle.setOutlineColor(isSelected ? gatewayOutlineSelected :
+                                  (isHovered ? gatewayOutlineHover : gatewayOutline));
+            circle.setOutlineThickness(isSelected || isHovered ? nodeOutlineHighlight : nodeOutlineNormal);
         }
 
         window.draw(circle);
@@ -573,12 +635,14 @@ void RoadViewer::renderNodeBases() {
 
 void RoadViewer::renderNodeLabels() {
     if (!fontLoaded) return;
+    using namespace roadViewer::colors;
+    using namespace roadViewer::dimensions;
 
     for (const auto& [id, node] : network.getNodes()) {
         sf::Text label;
         label.setFont(font);
-        label.setCharacterSize(11);
-        label.setFillColor(sf::Color(240, 240, 245));
+        label.setCharacterSize(nodeLabelFontSize);
+        label.setFillColor(hudTextHeader);
 
         label.setString(node->getShortLabel());
 
@@ -599,47 +663,52 @@ void RoadViewer::renderSelectedRoadOverlay() {
     const auto* nodeB = network.getNode(road->nodeB);
 
     if (road->isCurved && nodeA && nodeB) {
+        using namespace roadViewer::colors;
+        using namespace roadViewer::dimensions;
+
         // 1. Draw Control Polygon connecting NodeA -> P1 -> P2 -> NodeB
         sf::VertexArray polygon(sf::LineStrip);
-        polygon.append(sf::Vertex(nodeA->getPosition(), sf::Color(255, 190, 40, 150)));
-        polygon.append(sf::Vertex(road->controlPoint1, sf::Color(255, 190, 40, 220)));
-        polygon.append(sf::Vertex(road->controlPoint2, sf::Color(255, 190, 40, 220)));
-        polygon.append(sf::Vertex(nodeB->getPosition(), sf::Color(255, 190, 40, 150)));
+        polygon.append(sf::Vertex(nodeA->getPosition(), controlPolygonLine));
+        polygon.append(sf::Vertex(road->controlPoint1, controlPolygonLine));
+        polygon.append(sf::Vertex(road->controlPoint2, controlPolygonLine));
+        polygon.append(sf::Vertex(nodeB->getPosition(), controlPolygonLine));
         window.draw(polygon);
 
         // 2. Draw Handle 1 (P1)
-        float r1 = (draggedHandleIndex == 1) ? 9.0f : ((hoveredHandleIndex == 1) ? 8.0f : 6.5f);
-        sf::Color c1 = (draggedHandleIndex == 1) ? sf::Color(255, 80, 80) :
-                      ((hoveredHandleIndex == 1) ? sf::Color(80, 255, 140) : sf::Color(255, 200, 50));
+        float r1 = (draggedHandleIndex == 1) ? handleRadiusDragged :
+                   ((hoveredHandleIndex == 1) ? handleRadiusHover : handleRadiusNormal);
+        sf::Color c1 = (draggedHandleIndex == 1) ? handleFillDragged :
+                      ((hoveredHandleIndex == 1) ? handleFillHover : handleFillNormal);
 
         sf::CircleShape h1(r1);
         h1.setOrigin(r1, r1);
         h1.setPosition(road->controlPoint1);
         h1.setFillColor(c1);
-        h1.setOutlineColor(sf::Color(255, 255, 255, 230));
-        h1.setOutlineThickness(2.0f);
+        h1.setOutlineColor(handleOutline);
+        h1.setOutlineThickness(handleOutlineThickness);
         window.draw(h1);
 
         // 3. Draw Handle 2 (P2)
-        float r2 = (draggedHandleIndex == 2) ? 9.0f : ((hoveredHandleIndex == 2) ? 8.0f : 6.5f);
-        sf::Color c2 = (draggedHandleIndex == 2) ? sf::Color(255, 80, 80) :
-                      ((hoveredHandleIndex == 2) ? sf::Color(80, 255, 140) : sf::Color(255, 200, 50));
+        float r2 = (draggedHandleIndex == 2) ? handleRadiusDragged :
+                   ((hoveredHandleIndex == 2) ? handleRadiusHover : handleRadiusNormal);
+        sf::Color c2 = (draggedHandleIndex == 2) ? handleFillDragged :
+                      ((hoveredHandleIndex == 2) ? handleFillHover : handleFillNormal);
 
         sf::CircleShape h2(r2);
         h2.setOrigin(r2, r2);
         h2.setPosition(road->controlPoint2);
         h2.setFillColor(c2);
-        h2.setOutlineColor(sf::Color(255, 255, 255, 230));
-        h2.setOutlineThickness(2.0f);
+        h2.setOutlineColor(handleOutline);
+        h2.setOutlineThickness(handleOutlineThickness);
         window.draw(h2);
 
         // 4. Draw labels for P1 and P2
         if (fontLoaded) {
             sf::Text t1, t2;
             t1.setFont(font); t2.setFont(font);
-            t1.setCharacterSize(11); t2.setCharacterSize(11);
-            t1.setFillColor(sf::Color(255, 235, 180));
-            t2.setFillColor(sf::Color(255, 235, 180));
+            t1.setCharacterSize(handleLabelFontSize); t2.setCharacterSize(handleLabelFontSize);
+            t1.setFillColor(handleLabel);
+            t2.setFillColor(handleLabel);
 
             t1.setString("P1");
             t1.setPosition(road->controlPoint1.x + 10.0f, road->controlPoint1.y - 14.0f);
@@ -653,55 +722,61 @@ void RoadViewer::renderSelectedRoadOverlay() {
 }
 
 void RoadViewer::renderCreationPreview(const sf::Vector2f& mousePos) {
-    if (currentTool == ToolMode::StraightRoad && roadCreationStartNodeId != 0) {
+    using namespace roadViewer::colors;
+    using namespace roadViewer::dimensions;
+
+    bool isStraightMode = (currentTool == ToolMode::StraightRoad || currentTool == ToolMode::StraightOneWayRoad);
+    bool isCurvedMode = (currentTool == ToolMode::CurvedRoad || currentTool == ToolMode::CurvedOneWayRoad);
+
+    if (isStraightMode && roadCreationStartNodeId != 0) {
         const auto* startNode = network.getNode(roadCreationStartNodeId);
         if (startNode) {
             sf::VertexArray previewLine(sf::Lines);
-            previewLine.append(sf::Vertex(startNode->getPosition(), sf::Color(80, 255, 140, 180)));
-            previewLine.append(sf::Vertex(mousePos, sf::Color(80, 255, 140, 180)));
+            previewLine.append(sf::Vertex(startNode->getPosition(), previewStraightLine));
+            previewLine.append(sf::Vertex(mousePos, previewStraightLine));
             window.draw(previewLine);
 
-            sf::CircleShape targetDot(6.0f);
-            targetDot.setOrigin(6.0f, 6.0f);
+            sf::CircleShape targetDot(previewTargetDotRadius);
+            targetDot.setOrigin(previewTargetDotRadius, previewTargetDotRadius);
             targetDot.setPosition(mousePos);
-            targetDot.setFillColor(sf::Color(80, 255, 140, 220));
+            targetDot.setFillColor(previewStraightDot);
             window.draw(targetDot);
         }
-    } else if (currentTool == ToolMode::CurvedRoad) {
+    } else if (isCurvedMode) {
         const auto* startNode = network.getNode(roadCreationStartNodeId);
         if (curvedRoadStep == 1 && startNode) {
             sf::VertexArray l(sf::Lines);
-            l.append(sf::Vertex(startNode->getPosition(), sf::Color(255, 200, 80, 180)));
-            l.append(sf::Vertex(mousePos, sf::Color(255, 200, 80, 180)));
+            l.append(sf::Vertex(startNode->getPosition(), previewCurvedLine));
+            l.append(sf::Vertex(mousePos, previewCurvedLine));
             window.draw(l);
         } else if (curvedRoadStep == 2 && startNode) {
             sf::VertexArray l(sf::Lines);
-            l.append(sf::Vertex(curveHandle1, sf::Color(255, 200, 80, 180)));
-            l.append(sf::Vertex(mousePos, sf::Color(255, 200, 80, 180)));
+            l.append(sf::Vertex(curveHandle1, previewCurvedLine));
+            l.append(sf::Vertex(mousePos, previewCurvedLine));
             window.draw(l);
 
-            sf::CircleShape h1(5.0f);
-            h1.setOrigin(5.0f, 5.0f);
+            sf::CircleShape h1(previewHandleDotRadius);
+            h1.setOrigin(previewHandleDotRadius, previewHandleDotRadius);
             h1.setPosition(curveHandle1);
-            h1.setFillColor(sf::Color(255, 200, 80));
+            h1.setFillColor(previewHandleDot);
             window.draw(h1);
         } else if (curvedRoadStep == 3 && startNode) {
             CubicBezierCurve previewCurve(startNode->getPosition(), curveHandle1, curveHandle2, mousePos);
             CubicBezierSpline previewSpline;
             previewSpline.addSegment(previewCurve);
-            sf::VertexArray curveVerts = previewSpline.getVertices(30);
+            sf::VertexArray curveVerts = previewSpline.getVertices(roadRenderSamples);
             for (size_t i = 0; i < curveVerts.getVertexCount(); ++i) {
-                curveVerts[i].color = sf::Color(255, 200, 80, 200);
+                curveVerts[i].color = previewCurvedSpline;
             }
             window.draw(curveVerts);
 
-            sf::CircleShape h1(5.0f), h2(5.0f);
-            h1.setOrigin(5.0f, 5.0f);
+            sf::CircleShape h1(previewHandleDotRadius), h2(previewHandleDotRadius);
+            h1.setOrigin(previewHandleDotRadius, previewHandleDotRadius);
             h1.setPosition(curveHandle1);
-            h1.setFillColor(sf::Color(255, 200, 80));
-            h2.setOrigin(5.0f, 5.0f);
+            h1.setFillColor(previewHandleDot);
+            h2.setOrigin(previewHandleDotRadius, previewHandleDotRadius);
             h2.setPosition(curveHandle2);
-            h2.setFillColor(sf::Color(255, 200, 80));
+            h2.setFillColor(previewHandleDot);
             window.draw(h1);
             window.draw(h2);
         }
@@ -710,6 +785,8 @@ void RoadViewer::renderCreationPreview(const sf::Vector2f& mousePos) {
 
 void RoadViewer::renderGUIButtons() {
     if (!fontLoaded) return;
+    using namespace roadViewer::colors;
+    using namespace roadViewer::dimensions;
 
     for (size_t i = 0; i < guiButtons.size(); ++i) {
         const auto& btn = guiButtons[i];
@@ -720,26 +797,25 @@ void RoadViewer::renderGUIButtons() {
         rect.setPosition(btn.bounds.left, btn.bounds.top);
 
         if (isActive) {
-            rect.setFillColor(sf::Color(32, 85, 140, 245));
-            rect.setOutlineColor(sf::Color(80, 220, 255));
-            rect.setOutlineThickness(2.0f);
+            rect.setFillColor(btnBgActive);
+            rect.setOutlineColor(btnOutlineActive);
+            rect.setOutlineThickness(btnOutlineThicknessActive);
         } else if (isHovered) {
-            rect.setFillColor(sf::Color(48, 56, 72, 235));
-            rect.setOutlineColor(sf::Color(140, 180, 230));
-            rect.setOutlineThickness(1.5f);
+            rect.setFillColor(btnBgHover);
+            rect.setOutlineColor(btnOutlineHover);
+            rect.setOutlineThickness(btnOutlineThicknessHover);
         } else {
-            rect.setFillColor(sf::Color(24, 27, 36, 225));
-            rect.setOutlineColor(sf::Color(65, 75, 95));
-            rect.setOutlineThickness(1.0f);
+            rect.setFillColor(btnBgNormal);
+            rect.setOutlineColor(btnOutlineNormal);
+            rect.setOutlineThickness(btnOutlineThicknessNormal);
         }
 
         window.draw(rect);
 
-        // Draw Button Label
         sf::Text label;
         label.setFont(font);
-        label.setCharacterSize(12);
-        label.setFillColor(isActive ? sf::Color(255, 255, 255) : (isHovered ? sf::Color(240, 245, 255) : sf::Color(190, 195, 210)));
+        label.setCharacterSize(btnFontSize);
+        label.setFillColor(isActive ? btnTextActive : (isHovered ? btnTextHover : btnTextNormal));
         label.setString(btn.label);
 
         sf::FloatRect textBounds = label.getLocalBounds();
@@ -752,6 +828,8 @@ void RoadViewer::renderGUIButtons() {
 
 void RoadViewer::drawHUD() {
     if (!fontLoaded) return;
+    using namespace roadViewer::colors;
+    using namespace roadViewer::dimensions;
 
     std::ostringstream ssHeader;
     std::ostringstream ssSelected;
@@ -770,6 +848,14 @@ void RoadViewer::drawHUD() {
         case ToolMode::CurvedRoad:
             ssHeader << "[ TOOL: CURVED TWO-WAY ROAD (Step " << (curvedRoadStep + 1) << "/4) ]\n";
             break;
+        case ToolMode::StraightOneWayRoad:
+            ssHeader << "[ TOOL: STRAIGHT ONE-WAY ROAD"
+                     << (roadCreationStartNodeId != 0 ? " (Step 2/2: Select Target Node)" : " (Step 1/2: Select Start Node)")
+                     << " ]\n";
+            break;
+        case ToolMode::CurvedOneWayRoad:
+            ssHeader << "[ TOOL: CURVED ONE-WAY ROAD (Step " << (curvedRoadStep + 1) << "/4) ]\n";
+            break;
         case ToolMode::AddIntersection:
             ssHeader << "[ TOOL: ADD INTERSECTION (or click Gateway to convert) ]\n";
             break;
@@ -786,9 +872,16 @@ void RoadViewer::drawHUD() {
         else gatewayCount++;
     }
 
+    size_t twoWayCount = 0;
+    size_t oneWayCount = 0;
+    for (const auto& [id, road] : network.getRoads()) {
+        if (road.isOneWay()) oneWayCount++;
+        else twoWayCount++;
+    }
+
     ssHeader << "Network: " << network.getNodes().size() << " Nodes (" << intersectionCount << " Intersections, "
-             << gatewayCount << " Gateways) | " << network.getRoads().size() << " Two-Way Roads | "
-             << network.getSegments().size() << " Drive Lanes | "
+             << gatewayCount << " Gateways) | " << network.getRoads().size() << " Roads (" << twoWayCount << " 2-Way, "
+             << oneWayCount << " 1-Way) | " << network.getSegments().size() << " Drive Lanes | "
              << (showTurnLanes ? std::to_string(network.getTurnLanes().size()) + " Turn Lanes [VISIBLE]" : "Turn Lanes [HIDDEN]");
 
     // 3. Selected Entity Info (Lime Green)
@@ -810,8 +903,11 @@ void RoadViewer::drawHUD() {
         const auto* r = network.getRoad(static_cast<size_t>(selectedRoadId));
         if (r) {
             hasSelection = true;
-            ssSelected << ">>> Selected " << (r->isCurved ? "Curved" : "Straight") << " Road R" << r->id
-                       << " (Node " << r->nodeA << " <-> Node " << r->nodeB << ")";
+            std::string roadTypeStr = r->isOneWay() ? (r->isCurved ? "Curved One-Way" : "Straight One-Way") :
+                                                      (r->isCurved ? "Curved Two-Way" : "Straight Two-Way");
+            ssSelected << ">>> Selected " << roadTypeStr << " Road R" << r->id
+                       << " (" << (r->isOneWay() ? "Node " + std::to_string(r->nodeA) + " -> Node " + std::to_string(r->nodeB) :
+                                                   "Node " + std::to_string(r->nodeA) + " <-> Node " + std::to_string(r->nodeB)) << ")";
             if (r->isCurved) {
                 ssSelected << " | [Drag P1 / P2 to reshape curve] | [Del] Remove Road";
             } else {
@@ -825,16 +921,16 @@ void RoadViewer::drawHUD() {
 
     // Setup Text Objects
     sf::Text textHeader, textSelected, textFooter;
-    textHeader.setFont(font); textHeader.setCharacterSize(13); textHeader.setFillColor(sf::Color(230, 230, 240));
-    textSelected.setFont(font); textSelected.setCharacterSize(13); textSelected.setFillColor(sf::Color(80, 255, 120)); // Lime Green!
-    textFooter.setFont(font); textFooter.setCharacterSize(13); textFooter.setFillColor(sf::Color(170, 180, 200));
+    textHeader.setFont(font); textHeader.setCharacterSize(hudFontSize); textHeader.setFillColor(hudTextHeader);
+    textSelected.setFont(font); textSelected.setCharacterSize(hudFontSize); textSelected.setFillColor(hudTextSelected);
+    textFooter.setFont(font); textFooter.setCharacterSize(hudFontSize); textFooter.setFillColor(hudTextFooter);
 
     textHeader.setString(ssHeader.str());
     if (hasSelection) textSelected.setString(ssSelected.str());
     textFooter.setString(ssFooter.str());
 
-    float startX = 14.0f;
-    float currentY = 14.0f;
+    float startX = hudPaddingX;
+    float currentY = hudPaddingY;
 
     textHeader.setPosition(startX, currentY);
     currentY += textHeader.getGlobalBounds().height + 6.0f;
@@ -851,14 +947,14 @@ void RoadViewer::drawHUD() {
     float maxWidth = std::max({textHeader.getGlobalBounds().width,
                                hasSelection ? textSelected.getGlobalBounds().width : 0.0f,
                                textFooter.getGlobalBounds().width,
-                               750.0f});
+                               870.0f});
 
-    float totalHeight = currentY - 14.0f;
+    float totalHeight = currentY - hudPaddingY;
     sf::RectangleShape bg(sf::Vector2f(maxWidth + 20.f, totalHeight + 16.f));
-    bg.setPosition(startX - 9.f, 14.f - 7.f);
-    bg.setFillColor(sf::Color(14, 15, 20, 230));
-    bg.setOutlineColor(sf::Color(60, 140, 220));
-    bg.setOutlineThickness(1.5f);
+    bg.setPosition(startX - 9.f, hudPaddingY - 7.f);
+    bg.setFillColor(hudBg);
+    bg.setOutlineColor(hudOutline);
+    bg.setOutlineThickness(hudBorderRadius);
 
     window.draw(bg);
     window.draw(textHeader);

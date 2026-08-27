@@ -24,9 +24,9 @@ NetworkManager::NetworkManager() = default;
 
 size_t NetworkManager::createNode(const sf::Vector2f& position, RoadNetwork::NodeType type, float radius) {
     if (type == RoadNetwork::NodeType::Intersection) {
-        return createIntersection(position, radius > 0.0f ? radius : 26.0f);
+        return createIntersection(position, radius > 0.0f ? radius : roadNetwork::defaults::intersectionRadius);
     } else {
-        return createGateway(position, radius > 0.0f ? radius : 20.0f);
+        return createGateway(position, radius > 0.0f ? radius : roadNetwork::defaults::gatewayRadius);
     }
 }
 
@@ -58,7 +58,7 @@ bool NetworkManager::convertGatewayToIntersection(size_t nodeId) {
     auto newIntersection = std::make_shared<RoadNetwork::Intersection>(
         oldGateway->getId(),
         oldGateway->getPosition(),
-        26.0f
+        roadNetwork::defaults::intersectionRadius
     );
 
     newIntersection->getIncomingEdgeIds() = oldGateway->getIncomingEdgeIds();
@@ -89,7 +89,7 @@ bool NetworkManager::convertIntersectionToGateway(size_t nodeId) {
     auto newGateway = std::make_shared<RoadNetwork::Gateway>(
         oldIntersection->getId(),
         oldIntersection->getPosition(),
-        20.0f
+        roadNetwork::defaults::gatewayRadius
     );
 
     newGateway->getIncomingEdgeIds() = oldIntersection->getIncomingEdgeIds();
@@ -236,7 +236,7 @@ int NetworkManager::findRoadAt(const sf::Vector2f& pos, float maxDistance) const
         const auto* seg = getSegment(road.forwardSegmentId);
         if (!seg || seg->spline.empty()) continue;
 
-        const int samples = 30;
+        const int samples = roadNetwork::defaults::roadSampleCount;
         sf::Vector2f prev = seg->spline.eval(0.0f);
         for (int i = 1; i <= samples; ++i) {
             float t = static_cast<float>(i) / samples;
@@ -287,17 +287,17 @@ size_t NetworkManager::createStraightTwoWayRoad(size_t nodeA, size_t nodeB, floa
     size_t bwdSegId = getNextSegmentId();
 
     RoadNetwork::RoadSegment fwdSeg(fwdSegId, nodeA, nodeB, CubicBezierSpline(), speedLimit, true, laneWidth,
-                                    RoadNetwork::SegmentType::NormalLane, sf::Color(80, 220, 255));
+                                    RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::fwdLane);
     fwdSeg.parentRoadId = roadId;
 
     RoadNetwork::RoadSegment bwdSeg(bwdSegId, nodeB, nodeA, CubicBezierSpline(), speedLimit, true, laneWidth,
-                                    RoadNetwork::SegmentType::NormalLane, sf::Color(100, 255, 180));
+                                    RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::bwdLane);
     bwdSeg.parentRoadId = roadId;
 
     segments.emplace(fwdSegId, fwdSeg);
     segments.emplace(bwdSegId, bwdSeg);
 
-    RoadNetwork::TwoWayRoad road(roadId, nodeA, nodeB, fwdSegId, bwdSegId, speedLimit, laneWidth);
+    RoadNetwork::Road road(roadId, nodeA, nodeB, fwdSegId, bwdSegId, speedLimit, laneWidth);
     roads.emplace(roadId, road);
 
     nodes[nodeA]->addConnectedRoad(roadId);
@@ -330,17 +330,17 @@ size_t NetworkManager::createCurvedTwoWayRoad(size_t nodeA, size_t nodeB,
     size_t bwdSegId = getNextSegmentId();
 
     RoadNetwork::RoadSegment fwdSeg(fwdSegId, nodeA, nodeB, CubicBezierSpline(), speedLimit, true, laneWidth,
-                                    RoadNetwork::SegmentType::NormalLane, sf::Color(80, 220, 255));
+                                    RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::fwdLane);
     fwdSeg.parentRoadId = roadId;
 
     RoadNetwork::RoadSegment bwdSeg(bwdSegId, nodeB, nodeA, CubicBezierSpline(), speedLimit, true, laneWidth,
-                                    RoadNetwork::SegmentType::NormalLane, sf::Color(100, 255, 180));
+                                    RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::bwdLane);
     bwdSeg.parentRoadId = roadId;
 
     segments.emplace(fwdSegId, fwdSeg);
     segments.emplace(bwdSegId, bwdSeg);
 
-    RoadNetwork::TwoWayRoad road(roadId, nodeA, nodeB, cp1, cp2, fwdSegId, bwdSegId, speedLimit, laneWidth);
+    RoadNetwork::Road road(roadId, nodeA, nodeB, cp1, cp2, fwdSegId, bwdSegId, speedLimit, laneWidth);
     roads.emplace(roadId, road);
 
     nodes[nodeA]->addConnectedRoad(roadId);
@@ -360,6 +360,74 @@ size_t NetworkManager::createCurvedTwoWayRoad(size_t nodeA, size_t nodeB,
     return roadId;
 }
 
+size_t NetworkManager::createStraightOneWayRoad(size_t fromNode, size_t toNode, float speedLimit, float laneWidth) {
+    if (fromNode == toNode || nodes.find(fromNode) == nodes.end() || nodes.find(toNode) == nodes.end()) {
+        print::warning("Cannot create one-way road: invalid endpoints.");
+        return 0;
+    }
+
+    size_t roadId = getNextRoadId();
+    size_t segId = getNextSegmentId();
+
+    RoadNetwork::RoadSegment seg(segId, fromNode, toNode, CubicBezierSpline(), speedLimit, true, laneWidth,
+                                 RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::oneWayLane);
+    seg.parentRoadId = roadId;
+
+    segments.emplace(segId, seg);
+
+    RoadNetwork::Road road(roadId, fromNode, toNode, segId, speedLimit, laneWidth);
+    roads.emplace(roadId, road);
+
+    nodes[fromNode]->addConnectedRoad(roadId);
+    nodes[fromNode]->addOutgoingEdge(segId);
+
+    nodes[toNode]->addConnectedRoad(roadId);
+    nodes[toNode]->addIncomingEdge(segId);
+
+    updateRoadGeometry(roads[roadId]);
+    rebuildIntersectionTurns(fromNode);
+    rebuildIntersectionTurns(toNode);
+
+    print::info("Created Straight One-Way Road " + std::to_string(roadId) + " from Node " +
+                std::to_string(fromNode) + " to Node " + std::to_string(toNode));
+    return roadId;
+}
+
+size_t NetworkManager::createCurvedOneWayRoad(size_t fromNode, size_t toNode,
+                                              const sf::Vector2f& cp1, const sf::Vector2f& cp2,
+                                              float speedLimit, float laneWidth) {
+    if (fromNode == toNode || nodes.find(fromNode) == nodes.end() || nodes.find(toNode) == nodes.end()) {
+        print::warning("Cannot create curved one-way road: invalid endpoints.");
+        return 0;
+    }
+
+    size_t roadId = getNextRoadId();
+    size_t segId = getNextSegmentId();
+
+    RoadNetwork::RoadSegment seg(segId, fromNode, toNode, CubicBezierSpline(), speedLimit, true, laneWidth,
+                                 RoadNetwork::SegmentType::NormalLane, roadNetwork::colors::oneWayLane);
+    seg.parentRoadId = roadId;
+
+    segments.emplace(segId, seg);
+
+    RoadNetwork::Road road(roadId, fromNode, toNode, cp1, cp2, segId, speedLimit, laneWidth);
+    roads.emplace(roadId, road);
+
+    nodes[fromNode]->addConnectedRoad(roadId);
+    nodes[fromNode]->addOutgoingEdge(segId);
+
+    nodes[toNode]->addConnectedRoad(roadId);
+    nodes[toNode]->addIncomingEdge(segId);
+
+    updateRoadGeometry(roads[roadId]);
+    rebuildIntersectionTurns(fromNode);
+    rebuildIntersectionTurns(toNode);
+
+    print::info("Created Curved One-Way Road " + std::to_string(roadId) + " from Node " +
+                std::to_string(fromNode) + " to Node " + std::to_string(toNode));
+    return roadId;
+}
+
 bool NetworkManager::removeRoad(size_t roadId) {
     auto it = roads.find(roadId);
     if (it == roads.end()) return false;
@@ -372,17 +440,23 @@ bool NetworkManager::removeRoad(size_t roadId) {
     if (nodes.find(nodeA) != nodes.end()) {
         nodes[nodeA]->removeConnectedRoad(roadId);
         nodes[nodeA]->removeOutgoingEdge(fwdId);
-        nodes[nodeA]->removeIncomingEdge(bwdId);
+        if (bwdId != 0) {
+            nodes[nodeA]->removeIncomingEdge(bwdId);
+        }
     }
 
     if (nodes.find(nodeB) != nodes.end()) {
         nodes[nodeB]->removeConnectedRoad(roadId);
         nodes[nodeB]->removeIncomingEdge(fwdId);
-        nodes[nodeB]->removeOutgoingEdge(bwdId);
+        if (bwdId != 0) {
+            nodes[nodeB]->removeOutgoingEdge(bwdId);
+        }
     }
 
     segments.erase(fwdId);
-    segments.erase(bwdId);
+    if (bwdId != 0) {
+        segments.erase(bwdId);
+    }
     roads.erase(it);
 
     rebuildIntersectionTurns(nodeA);
@@ -391,12 +465,12 @@ bool NetworkManager::removeRoad(size_t roadId) {
     return true;
 }
 
-RoadNetwork::TwoWayRoad* NetworkManager::getRoad(size_t roadId) {
+RoadNetwork::Road* NetworkManager::getRoad(size_t roadId) {
     auto it = roads.find(roadId);
     return it != roads.end() ? &it->second : nullptr;
 }
 
-const RoadNetwork::TwoWayRoad* NetworkManager::getRoad(size_t roadId) const {
+const RoadNetwork::Road* NetworkManager::getRoad(size_t roadId) const {
     auto it = roads.find(roadId);
     return it != roads.end() ? &it->second : nullptr;
 }
@@ -411,14 +485,13 @@ const RoadNetwork::RoadSegment* NetworkManager::getSegment(size_t segmentId) con
     return it != segments.end() ? &it->second : nullptr;
 }
 
-void NetworkManager::updateRoadGeometry(RoadNetwork::TwoWayRoad& road) {
+void NetworkManager::updateRoadGeometry(RoadNetwork::Road& road) {
     auto itA = nodes.find(road.nodeA);
     auto itB = nodes.find(road.nodeB);
     if (itA == nodes.end() || itB == nodes.end()) return;
 
     auto itFwd = segments.find(road.forwardSegmentId);
-    auto itBwd = segments.find(road.backwardSegmentId);
-    if (itFwd == segments.end() || itBwd == segments.end()) return;
+    if (itFwd == segments.end()) return;
 
     const sf::Vector2f posA = itA->second->getPosition();
     const sf::Vector2f posB = itB->second->getPosition();
@@ -426,81 +499,131 @@ void NetworkManager::updateRoadGeometry(RoadNetwork::TwoWayRoad& road) {
     const float radB = itB->second->getRadius();
     const float wOff = road.laneWidth * 0.5f;
 
-    if (!road.isCurved) {
-        sf::Vector2f diff = posB - posA;
-        float len = std::hypot(diff.x, diff.y);
-        if (len < 1e-3f) return;
+    if (road.isOneWay()) {
+        // One-Way Road: single lane running directly along the road centerline
+        if (!road.isCurved) {
+            sf::Vector2f diff = posB - posA;
+            float len = std::hypot(diff.x, diff.y);
+            if (len < 1e-3f) return;
 
-        sf::Vector2f u = diff / len;
-        sf::Vector2f n(-u.y, u.x);
+            sf::Vector2f u = diff / len;
+            float trimA = std::min(radA, len * roadNetwork::defaults::roadTrimRatio);
+            float trimB = std::min(radB, len * roadNetwork::defaults::roadTrimRatio);
 
-        float trimA = std::min(radA, len * 0.45f);
-        float trimB = std::min(radB, len * 0.45f);
+            sf::Vector2f startCenter = posA + u * trimA;
+            sf::Vector2f endCenter = posB - u * trimB;
+            float effLen = std::max(1.0f, len - trimA - trimB);
 
-        sf::Vector2f startCenter = posA + u * trimA;
-        sf::Vector2f endCenter = posB - u * trimB;
-        float effLen = std::max(1.0f, len - trimA - trimB);
+            sf::Vector2f p0 = startCenter;
+            sf::Vector2f p1 = p0 + u * (effLen / 3.0f);
+            sf::Vector2f p2 = endCenter - u * (effLen / 3.0f);
+            sf::Vector2f p3 = endCenter;
 
-        // Forward Lane (A -> B)
-        sf::Vector2f p0 = startCenter + n * wOff;
-        sf::Vector2f p1 = p0 + u * (effLen / 3.0f);
-        sf::Vector2f p2 = endCenter + n * wOff - u * (effLen / 3.0f);
-        sf::Vector2f p3 = endCenter + n * wOff;
+            itFwd->second.spline = CubicBezierSpline();
+            itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
+        } else {
+            sf::Vector2f t0 = road.controlPoint1 - posA;
+            if (std::hypot(t0.x, t0.y) < 1e-3f) t0 = road.controlPoint2 - posA;
+            float len0 = std::hypot(t0.x, t0.y);
+            sf::Vector2f u0 = len0 > 1e-4f ? t0 / len0 : sf::Vector2f(1, 0);
 
-        itFwd->second.spline = CubicBezierSpline();
-        itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
+            sf::Vector2f t3 = posB - road.controlPoint2;
+            if (std::hypot(t3.x, t3.y) < 1e-3f) t3 = posB - road.controlPoint1;
+            float len3 = std::hypot(t3.x, t3.y);
+            sf::Vector2f u3 = len3 > 1e-4f ? t3 / len3 : sf::Vector2f(1, 0);
 
-        // Backward Lane (B -> A)
-        sf::Vector2f q0 = endCenter - n * wOff;
-        sf::Vector2f q1 = q0 - u * (effLen / 3.0f);
-        sf::Vector2f q2 = startCenter - n * wOff + u * (effLen / 3.0f);
-        sf::Vector2f q3 = startCenter - n * wOff;
+            sf::Vector2f startCenter = posA + u0 * radA;
+            sf::Vector2f endCenter = posB - u3 * radB;
 
-        itBwd->second.spline = CubicBezierSpline();
-        itBwd->second.spline.addSegment(CubicBezierCurve(q0, q1, q2, q3));
+            sf::Vector2f p0 = startCenter;
+            sf::Vector2f p1 = road.controlPoint1;
+            sf::Vector2f p2 = road.controlPoint2;
+            sf::Vector2f p3 = endCenter;
+
+            itFwd->second.spline = CubicBezierSpline();
+            itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
+        }
     } else {
-        sf::Vector2f t0 = road.controlPoint1 - posA;
-        if (std::hypot(t0.x, t0.y) < 1e-3f) t0 = road.controlPoint2 - posA;
-        float len0 = std::hypot(t0.x, t0.y);
-        sf::Vector2f u0 = len0 > 1e-4f ? t0 / len0 : sf::Vector2f(1, 0);
-        sf::Vector2f n0(-u0.y, u0.x);
+        // Two-Way Road: two parallel lanes offset from centerline
+        auto itBwd = segments.find(road.backwardSegmentId);
+        if (itBwd == segments.end()) return;
 
-        sf::Vector2f t3 = posB - road.controlPoint2;
-        if (std::hypot(t3.x, t3.y) < 1e-3f) t3 = posB - road.controlPoint1;
-        float len3 = std::hypot(t3.x, t3.y);
-        sf::Vector2f u3 = len3 > 1e-4f ? t3 / len3 : sf::Vector2f(1, 0);
-        sf::Vector2f n3(-u3.y, u3.x);
+        if (!road.isCurved) {
+            sf::Vector2f diff = posB - posA;
+            float len = std::hypot(diff.x, diff.y);
+            if (len < 1e-3f) return;
 
-        sf::Vector2f t1 = road.controlPoint2 - posA;
-        float len1 = std::hypot(t1.x, t1.y);
-        sf::Vector2f u1 = len1 > 1e-4f ? t1 / len1 : u0;
-        sf::Vector2f n1(-u1.y, u1.x);
+            sf::Vector2f u = diff / len;
+            sf::Vector2f n(-u.y, u.x);
 
-        sf::Vector2f t2 = posB - road.controlPoint1;
-        float len2 = std::hypot(t2.x, t2.y);
-        sf::Vector2f u2 = len2 > 1e-4f ? t2 / len2 : u3;
-        sf::Vector2f n2(-u2.y, u2.x);
+            float trimA = std::min(radA, len * roadNetwork::defaults::roadTrimRatio);
+            float trimB = std::min(radB, len * roadNetwork::defaults::roadTrimRatio);
 
-        sf::Vector2f startCenter = posA + u0 * radA;
-        sf::Vector2f endCenter = posB - u3 * radB;
+            sf::Vector2f startCenter = posA + u * trimA;
+            sf::Vector2f endCenter = posB - u * trimB;
+            float effLen = std::max(1.0f, len - trimA - trimB);
 
-        // Forward Lane (A -> B)
-        sf::Vector2f p0 = startCenter + n0 * wOff;
-        sf::Vector2f p1 = road.controlPoint1 + n1 * wOff;
-        sf::Vector2f p2 = road.controlPoint2 + n2 * wOff;
-        sf::Vector2f p3 = endCenter + n3 * wOff;
+            // Forward Lane (A -> B)
+            sf::Vector2f p0 = startCenter + n * wOff;
+            sf::Vector2f p1 = p0 + u * (effLen / 3.0f);
+            sf::Vector2f p2 = endCenter + n * wOff - u * (effLen / 3.0f);
+            sf::Vector2f p3 = endCenter + n * wOff;
 
-        itFwd->second.spline = CubicBezierSpline();
-        itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
+            itFwd->second.spline = CubicBezierSpline();
+            itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
 
-        // Backward Lane (B -> A)
-        sf::Vector2f q0 = endCenter - n3 * wOff;
-        sf::Vector2f q1 = road.controlPoint2 - n2 * wOff;
-        sf::Vector2f q2 = road.controlPoint1 - n1 * wOff;
-        sf::Vector2f q3 = startCenter - n0 * wOff;
+            // Backward Lane (B -> A)
+            sf::Vector2f q0 = endCenter - n * wOff;
+            sf::Vector2f q1 = q0 - u * (effLen / 3.0f);
+            sf::Vector2f q2 = startCenter - n * wOff + u * (effLen / 3.0f);
+            sf::Vector2f q3 = startCenter - n * wOff;
 
-        itBwd->second.spline = CubicBezierSpline();
-        itBwd->second.spline.addSegment(CubicBezierCurve(q0, q1, q2, q3));
+            itBwd->second.spline = CubicBezierSpline();
+            itBwd->second.spline.addSegment(CubicBezierCurve(q0, q1, q2, q3));
+        } else {
+            sf::Vector2f t0 = road.controlPoint1 - posA;
+            if (std::hypot(t0.x, t0.y) < 1e-3f) t0 = road.controlPoint2 - posA;
+            float len0 = std::hypot(t0.x, t0.y);
+            sf::Vector2f u0 = len0 > 1e-4f ? t0 / len0 : sf::Vector2f(1, 0);
+            sf::Vector2f n0(-u0.y, u0.x);
+
+            sf::Vector2f t3 = posB - road.controlPoint2;
+            if (std::hypot(t3.x, t3.y) < 1e-3f) t3 = posB - road.controlPoint1;
+            float len3 = std::hypot(t3.x, t3.y);
+            sf::Vector2f u3 = len3 > 1e-4f ? t3 / len3 : sf::Vector2f(1, 0);
+            sf::Vector2f n3(-u3.y, u3.x);
+
+            sf::Vector2f t1 = road.controlPoint2 - posA;
+            float len1 = std::hypot(t1.x, t1.y);
+            sf::Vector2f u1 = len1 > 1e-4f ? t1 / len1 : u0;
+            sf::Vector2f n1(-u1.y, u1.x);
+
+            sf::Vector2f t2 = posB - road.controlPoint1;
+            float len2 = std::hypot(t2.x, t2.y);
+            sf::Vector2f u2 = len2 > 1e-4f ? t2 / len2 : u3;
+            sf::Vector2f n2(-u2.y, u2.x);
+
+            sf::Vector2f startCenter = posA + u0 * radA;
+            sf::Vector2f endCenter = posB - u3 * radB;
+
+            // Forward Lane (A -> B)
+            sf::Vector2f p0 = startCenter + n0 * wOff;
+            sf::Vector2f p1 = road.controlPoint1 + n1 * wOff;
+            sf::Vector2f p2 = road.controlPoint2 + n2 * wOff;
+            sf::Vector2f p3 = endCenter + n3 * wOff;
+
+            itFwd->second.spline = CubicBezierSpline();
+            itFwd->second.spline.addSegment(CubicBezierCurve(p0, p1, p2, p3));
+
+            // Backward Lane (B -> A)
+            sf::Vector2f q0 = endCenter - n3 * wOff;
+            sf::Vector2f q1 = road.controlPoint2 - n2 * wOff;
+            sf::Vector2f q2 = road.controlPoint1 - n1 * wOff;
+            sf::Vector2f q3 = startCenter - n0 * wOff;
+
+            itBwd->second.spline = CubicBezierSpline();
+            itBwd->second.spline.addSegment(CubicBezierCurve(q0, q1, q2, q3));
+        }
     }
 }
 
@@ -544,7 +667,8 @@ void NetworkManager::rebuildIntersectionTurns(size_t nodeId) {
             sf::Vector2f uOut = lenOut > 1e-4f ? vOut / lenOut : sf::Vector2f(1, 0);
 
             float dist = std::hypot(pOut.x - pIn.x, pOut.y - pIn.y);
-            float h = std::min(dist / 2.5f, nodeIt->second->getRadius() * 1.2f);
+            float h = std::min(dist / roadNetwork::defaults::handleScaleRatio,
+                               nodeIt->second->getRadius() * roadNetwork::defaults::maxTurnHandleRatio);
 
             sf::Vector2f t0 = pIn;
             sf::Vector2f t1 = pIn + uIn * h;
@@ -555,9 +679,10 @@ void NetworkManager::rebuildIntersectionTurns(size_t nodeId) {
             turnSpline.addSegment(CubicBezierCurve(t0, t1, t2, t3));
 
             RoadNetwork::RoadSegment turnLane(getNextSegmentId(), nodeId, nodeId, turnSpline,
-                                             3.5f, true, 12.0f,
+                                             roadNetwork::defaults::turnLaneSpeedLimit, true,
+                                             roadNetwork::defaults::turnLaneWidth,
                                              RoadNetwork::SegmentType::IntersectionTurn,
-                                             sf::Color(255, 210, 60, 240));
+                                             roadNetwork::colors::turnLane);
             turnLanes.push_back(turnLane);
         }
     }
@@ -590,32 +715,30 @@ void NetworkManager::loadSampleNetwork(unsigned int windowWidth, unsigned int wi
     float cy = windowHeight * 0.5f;
     float spread = std::min(windowWidth, windowHeight) * 0.28f;
 
-    size_t nCenter = createIntersection(sf::Vector2f(cx, cy), 28.0f);
-    size_t nNorth = createGateway(sf::Vector2f(cx, cy - spread * 1.1f), 20.0f);
-    size_t nSouth = createGateway(sf::Vector2f(cx, cy + spread * 1.1f), 20.0f);
-    size_t nWest = createGateway(sf::Vector2f(cx - spread * 1.2f, cy), 20.0f);
+    size_t nCenter = createIntersection(sf::Vector2f(cx, cy), roadNetwork::defaults::intersectionRadius + 2.0f);
+    size_t nNorth = createGateway(sf::Vector2f(cx, cy - spread * 1.1f), roadNetwork::defaults::gatewayRadius);
+    size_t nSouth = createGateway(sf::Vector2f(cx, cy + spread * 1.1f), roadNetwork::defaults::gatewayRadius);
+    size_t nWest = createGateway(sf::Vector2f(cx - spread * 1.2f, cy), roadNetwork::defaults::gatewayRadius);
     
-    size_t nEastJunction = createIntersection(sf::Vector2f(cx + spread * 0.9f, cy), 26.0f);
-    size_t nEastNorth = createGateway(sf::Vector2f(cx + spread * 1.4f, cy - spread * 0.8f), 20.0f);
-    size_t nEastSouth = createGateway(sf::Vector2f(cx + spread * 1.4f, cy + spread * 0.8f), 20.0f);
+    size_t nEastJunction = createIntersection(sf::Vector2f(cx + spread * 0.9f, cy), roadNetwork::defaults::intersectionRadius);
+    size_t nEastNorth = createGateway(sf::Vector2f(cx + spread * 1.4f, cy - spread * 0.8f), roadNetwork::defaults::gatewayRadius);
+    size_t nEastSouth = createGateway(sf::Vector2f(cx + spread * 1.4f, cy + spread * 0.8f), roadNetwork::defaults::gatewayRadius);
 
-    createStraightTwoWayRoad(nCenter, nNorth, 5.0f, 14.0f);
-    createStraightTwoWayRoad(nCenter, nSouth, 5.0f, 14.0f);
-    createStraightTwoWayRoad(nCenter, nWest, 5.0f, 14.0f);
-    createStraightTwoWayRoad(nCenter, nEastJunction, 5.0f, 14.0f);
+    createStraightTwoWayRoad(nCenter, nNorth);
+    createStraightTwoWayRoad(nCenter, nSouth);
+    createStraightTwoWayRoad(nCenter, nWest);
+    createStraightTwoWayRoad(nCenter, nEastJunction);
 
     createCurvedTwoWayRoad(
         nEastJunction, nEastNorth,
         sf::Vector2f(cx + spread * 1.0f, cy - spread * 0.5f),
-        sf::Vector2f(cx + spread * 1.2f, cy - spread * 0.7f),
-        5.0f, 14.0f
+        sf::Vector2f(cx + spread * 1.2f, cy - spread * 0.7f)
     );
 
     createCurvedTwoWayRoad(
         nEastJunction, nEastSouth,
         sf::Vector2f(cx + spread * 1.0f, cy + spread * 0.5f),
-        sf::Vector2f(cx + spread * 1.2f, cy + spread * 0.7f),
-        5.0f, 14.0f
+        sf::Vector2f(cx + spread * 1.2f, cy + spread * 0.7f)
     );
 
     print::info("Loaded rich sample road network with intersections, turn lanes, and curved highways.");

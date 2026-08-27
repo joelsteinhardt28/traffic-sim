@@ -28,6 +28,14 @@ enum class SegmentType {
 };
 
 /**
+ * @brief Categorizes roads as bidirectional two-way streets or single-direction one-way streets.
+ */
+enum class RoadType {
+    TwoWay,  ///< Classic two-way street with forward and backward lanes
+    OneWay   ///< Single-direction one-way road with one driving lane
+};
+
+/**
  * @brief Abstract base class representing a node (junction or endpoint) in the road graph.
  */
 class Node {
@@ -82,7 +90,6 @@ protected:
 
 /**
  * @brief Concrete Node subclass representing a multi-way road intersection.
- * Supports automatic internal turning lane generation, traffic routing, and junction geometry.
  */
 class Intersection : public Node {
 public:
@@ -135,33 +142,83 @@ struct RoadSegment {
 };
 
 /**
- * @brief High-level road construct representing a classic two-way street with forward and backward lanes.
+ * @brief Core road structure representing either a TwoWay street or a OneWay street.
  */
-struct TwoWayRoad {
+struct Road {
     size_t id = 0;
-    size_t nodeA = 0;
-    size_t nodeB = 0;
+    RoadType type = RoadType::TwoWay;
+    size_t nodeA = 0;   ///< Start / First node (For OneWay: fromNode)
+    size_t nodeB = 0;   ///< End / Second node (For OneWay: toNode)
     bool isCurved = false;
     sf::Vector2f controlPoint1 = {0.0f, 0.0f};
     sf::Vector2f controlPoint2 = {0.0f, 0.0f};
 
-    size_t forwardSegmentId = 0;   ///< Lane from Node A -> Node B (Right-hand side)
-    size_t backwardSegmentId = 0;  ///< Lane from Node B -> Node A (Right-hand side of return direction)
+    size_t forwardSegmentId = 0;   ///< Forward lane (For OneWay: the single directed lane)
+    size_t backwardSegmentId = 0;  ///< Backward lane (0 for OneWay)
     float speedLimit = 5.0f;
     float laneWidth = 14.0f;
 
-    TwoWayRoad() = default;
-    TwoWayRoad(size_t id, size_t nodeA, size_t nodeB, size_t forwardId, size_t backwardId,
-               float speedLimit = 5.0f, float laneWidth = 14.0f)
-        : id(id), nodeA(nodeA), nodeB(nodeB), isCurved(false),
+    Road() = default;
+
+    // Two-Way Constructor (Straight)
+    Road(size_t id, size_t nodeA, size_t nodeB, size_t forwardId, size_t backwardId,
+         float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), type(RoadType::TwoWay), nodeA(nodeA), nodeB(nodeB), isCurved(false),
           forwardSegmentId(forwardId), backwardSegmentId(backwardId),
           speedLimit(speedLimit), laneWidth(laneWidth) {}
 
-    TwoWayRoad(size_t id, size_t nodeA, size_t nodeB, const sf::Vector2f& cp1, const sf::Vector2f& cp2,
-               size_t forwardId, size_t backwardId, float speedLimit = 5.0f, float laneWidth = 14.0f)
-        : id(id), nodeA(nodeA), nodeB(nodeB), isCurved(true), controlPoint1(cp1), controlPoint2(cp2),
+    // Two-Way Constructor (Curved)
+    Road(size_t id, size_t nodeA, size_t nodeB, const sf::Vector2f& cp1, const sf::Vector2f& cp2,
+         size_t forwardId, size_t backwardId, float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), type(RoadType::TwoWay), nodeA(nodeA), nodeB(nodeB), isCurved(true),
+          controlPoint1(cp1), controlPoint2(cp2),
           forwardSegmentId(forwardId), backwardSegmentId(backwardId),
           speedLimit(speedLimit), laneWidth(laneWidth) {}
+
+    // One-Way Constructor (Straight)
+    Road(size_t id, size_t fromNode, size_t toNode, size_t segmentId,
+         float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), type(RoadType::OneWay), nodeA(fromNode), nodeB(toNode), isCurved(false),
+          forwardSegmentId(segmentId), backwardSegmentId(0),
+          speedLimit(speedLimit), laneWidth(laneWidth) {}
+
+    // One-Way Constructor (Curved)
+    Road(size_t id, size_t fromNode, size_t toNode, const sf::Vector2f& cp1, const sf::Vector2f& cp2,
+         size_t segmentId, float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), type(RoadType::OneWay), nodeA(fromNode), nodeB(toNode), isCurved(true),
+          controlPoint1(cp1), controlPoint2(cp2),
+          forwardSegmentId(segmentId), backwardSegmentId(0),
+          speedLimit(speedLimit), laneWidth(laneWidth) {}
+
+    [[nodiscard]] bool isOneWay() const { return type == RoadType::OneWay; }
+    [[nodiscard]] bool isTwoWay() const { return type == RoadType::TwoWay; }
+};
+
+// Aliases for compatibility
+using TwoWayRoad = Road;
+
+struct OneWayRoad {
+    size_t id = 0;
+    size_t fromNode = 0;
+    size_t toNode = 0;
+    bool isCurved = false;
+    sf::Vector2f controlPoint1 = {0.0f, 0.0f};
+    sf::Vector2f controlPoint2 = {0.0f, 0.0f};
+    size_t segmentId = 0;
+    float speedLimit = 5.0f;
+    float laneWidth = 14.0f;
+
+    OneWayRoad() = default;
+    OneWayRoad(size_t id, size_t fromNode, size_t toNode, size_t segmentId,
+               float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), fromNode(fromNode), toNode(toNode), isCurved(false),
+          segmentId(segmentId), speedLimit(speedLimit), laneWidth(laneWidth) {}
+
+    OneWayRoad(size_t id, size_t fromNode, size_t toNode, const sf::Vector2f& cp1, const sf::Vector2f& cp2,
+               size_t segmentId, float speedLimit = 5.0f, float laneWidth = 14.0f)
+        : id(id), fromNode(fromNode), toNode(toNode), isCurved(true),
+          controlPoint1(cp1), controlPoint2(cp2),
+          segmentId(segmentId), speedLimit(speedLimit), laneWidth(laneWidth) {}
 };
 
 } // namespace RoadNetwork
