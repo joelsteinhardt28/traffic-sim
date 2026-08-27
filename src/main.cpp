@@ -1,7 +1,7 @@
-#include "CurveViewer.hpp"
+#include "RoadViewer.hpp"
 
 int main() {
-    CurveViewer viewer(true, "Traffic Flow Simulation - Bézier Curve Viewer");
+    RoadViewer viewer(true, "Traffic Flow Simulation - Road Network Viewer");
     viewer.run();
     return 0;
 }
