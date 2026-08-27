@@ -308,14 +308,15 @@ void CurveViewer::handleSimulationKeyPress(sf::Keyboard::Key key) {
         toggleSimulation();
     } else if (key == sf::Keyboard::R) {
         resetSimulation();
-    } else if (key == sf::Keyboard::Up || key == sf::Keyboard::Equal || key == sf::Keyboard::Add) {
-        float newSpeed = agent.getSpeed() + 0.0005f;
-        agent.setSpeed(newSpeed);
-        print::info("Agent speed increased to: " + std::to_string(agent.getSpeed()));
-    } else if (key == sf::Keyboard::Down || key == sf::Keyboard::Dash || key == sf::Keyboard::Subtract) {
-        float newSpeed = std::max(0.0002f, agent.getSpeed() - 0.0005f);
-        agent.setSpeed(newSpeed);
-        print::info("Agent speed decreased to: " + std::to_string(agent.getSpeed()));
+    } else if (key == sf::Keyboard::Up || key == sf::Keyboard::Q || key == sf::Keyboard::Add) {
+        print::debug("Up speed");
+        float newSpeed = agent.getDesiredSpeed() + 0.5f;
+        agent.setDesiredSpeed(newSpeed);
+        print::info("Agent desired speed increased to: " + std::to_string(agent.getDesiredSpeed()) + " px/frame");
+    } else if (key == sf::Keyboard::Down || key == sf::Keyboard::A || key == sf::Keyboard::Subtract) {
+        float newSpeed = std::max(1.0f, agent.getDesiredSpeed() - 0.5f);
+        agent.setDesiredSpeed(newSpeed);
+        print::info("Agent desired speed decreased to: " + std::to_string(agent.getDesiredSpeed()) + " px/frame");
     } else if (key == sf::Keyboard::D) {
         loadSampleSpline();
     }
@@ -542,10 +543,11 @@ void CurveViewer::drawHUD() {
     // Simulation Stats
     if (hasSpline) {
         std::ostringstream simStream;
-        simStream.precision(3);
+        simStream.precision(2);
         simStream << std::fixed;
-        simStream << "Agent: t=" << agent.getT() << " | Speed=" << agent.getSpeed()
-                  << " | Heading=" << static_cast<int>(agent.getRotation()) << " deg | Sim: "
+        simStream << "Agent: t=" << agent.getT() << " | Speed=" << agent.getCurrentSpeed()
+                  << " px/f (Target: " << agent.getDesiredSpeed() << ") | Heading="
+                  << static_cast<int>(agent.getRotation()) << " deg | Sim: "
                   << (simulationRunning ? "Running" : "Paused") << "\n";
         ss << simStream.str();
     }

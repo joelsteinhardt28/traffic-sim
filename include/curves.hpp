@@ -24,6 +24,7 @@ public:
     sf::Vector2f getControlPoint(int index) const;
     sf::Vector2f eval(float t) const;
     sf::Vector2f evalTangent(float t) const;
+    sf::Vector2f evalSecondDerivative(float t) const;
 };
 
 
@@ -41,6 +42,7 @@ public:
     CubicBezierSpline() = default;
     sf::Vector2f eval(float t) const;
     sf::Vector2f evalTangent(float t) const;
+    sf::Vector2f evalSecondDerivative(float t) const;
     
     void addSegment(const CubicBezierCurve& segment);
     // Automatically uses the last point of the previous segment as the first point of the new segment

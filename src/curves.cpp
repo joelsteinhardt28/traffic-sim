@@ -17,6 +17,9 @@ CubicBezierCurve::CubicBezierCurve(const std::vector<sf::Vector2f>& points) {
     }
 }
 
+CubicBezierCurve::CubicBezierCurve(const sf::Vector2f& p0, const sf::Vector2f& p1, const sf::Vector2f& p2, const sf::Vector2f& p3)
+    : controlPoints{p0, p1, p2, p3} {}
+
 
 std::array<sf::Vector2f, 4> CubicBezierCurve::deCasteljau(float t, int steps) const {
     if (t < 0.0f || t > 1.0f) {
@@ -35,10 +38,6 @@ std::array<sf::Vector2f, 4> CubicBezierCurve::deCasteljau(float t, int steps) co
 }
 
 
-CubicBezierCurve::CubicBezierCurve(const sf::Vector2f& p0, const sf::Vector2f& p1, const sf::Vector2f& p2, const sf::Vector2f& p3)
-    : controlPoints{p0, p1, p2, p3} {}
-
-
 sf::Vector2f CubicBezierCurve::getControlPoint(int index) const {
     if (index < 0 || index >= 4) {
         throw std::out_of_range("Control point index must be in the range [0, 3]");
@@ -55,6 +54,15 @@ sf::Vector2f CubicBezierCurve::eval(float t) const {
 sf::Vector2f CubicBezierCurve::evalTangent(float t) const {
     std::array<sf::Vector2f, 4> points = deCasteljau(t, degree - 1);
     return static_cast<float>(degree) * (points[1] - points[0]);
+}
+
+
+sf::Vector2f CubicBezierCurve::evalSecondDerivative(float t) const {
+    float u = 1.0f - t;
+    sf::Vector2f p0 = controlPoints[0], p1 = controlPoints[1];
+    sf::Vector2f p2 = controlPoints[2], p3 = controlPoints[3];
+
+    return 6.0f * u * (p2 - 2.0f * p1 + p0) + 6.0f * t * (p3 - 2.0f * p2 + p1);
 }
 
 
@@ -94,6 +102,12 @@ sf::Vector2f CubicBezierSpline::eval(float t) const {
 sf::Vector2f CubicBezierSpline::evalTangent(float t) const {
     auto [index, localT] = getSegmentAndLocalT(t);
     return segments[index].evalTangent(localT);
+}
+
+
+sf::Vector2f CubicBezierSpline::evalSecondDerivative(float t) const {
+    auto [index, localT] = getSegmentAndLocalT(t);
+    return segments[index].evalSecondDerivative(localT);
 }
 
 
