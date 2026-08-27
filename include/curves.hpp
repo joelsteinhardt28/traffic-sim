@@ -27,6 +27,9 @@ public:
 };
 
 
+/**
+ * A class representing a cubic Bézier spline, which is a sequence of connected cubic Bézier curves.
+ */
 class CubicBezierSpline {
 private:
     std::vector<CubicBezierCurve> segments;
@@ -45,4 +48,9 @@ public:
 
     // Generates a continuous line strip fro SFML rendering
     sf::VertexArray getVertices(int resolutionPerCurve = 20) const;
-};   
+
+    [[nodiscard]] bool empty() const { return segments.empty(); }
+    [[nodiscard]] size_t getSegmentCount() const { return segments.size(); }
+    void clear() { segments.clear(); }
+    [[nodiscard]] const std::vector<CubicBezierCurve>& getSegments() const { return segments; }
+};

@@ -1,8 +1,10 @@
 #include "CurveViewer.hpp"
 #include "constants.hpp"
+#include "toolbox.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <iostream>
+#include <iomanip>
 #include <sstream>
 
 CurveViewer::CurveViewer(bool fullscreen, const std::string& title, unsigned int windowedWidth, unsigned int windowedHeight)
@@ -10,21 +12,8 @@ CurveViewer::CurveViewer(bool fullscreen, const std::string& title, unsigned int
     initWindow(isFullscreen);
     tryLoadFont();
 
-    std::cout << "\n=============================================\n"
-              << "       Interactive Bezier Spline Viewer       \n"
-              << "=============================================\n"
-              << " - Left-Click on canvas:  Place new control point\n"
-              << " - Left-Click & Drag:     Move existing control point\n"
-              << " - Z / Backspace:         Undo / remove last point\n"
-              << " - C / Delete:            Clear all points\n"
-              << " - D:                     Load sample spline demo\n"
-              << " - T:                     Toggle tangent vectors\n"
-              << " - P:                     Toggle control polygon\n"
-              << " - S:                     Start/Pause simulation\n"
-              << " - F11 / F:               Toggle Fullscreen\n"
-              << " - H / F1:                Toggle on-screen help\n"
-              << " - Escape:                Exit\n"
-              << "=============================================\n\n";
+    print::info("Interactive Bezier Spline & Traffic Simulation initialized.");
+    print::info("Controls: [Tab/M] Switch Mode | [Space/S] Sim Play/Pause | [Left-Click] Add/Drag | [H] HUD Help");
 }
 
 CurveViewer::CurveViewer(unsigned int width, unsigned int height, const std::string& title, bool fullscreen)
@@ -50,6 +39,26 @@ void CurveViewer::toggleFullscreen() {
     initWindow(!isFullscreen);
 }
 
+void CurveViewer::setMode(ViewerMode mode) {
+    currentMode = mode;
+    if (currentMode == ViewerMode::Simulation) {
+        print::info("Switched to Agent Simulation Mode.");
+        if (!hasSpline) {
+            print::warning("No active spline. Press 'D' to load demo or [Tab] to return to Curve Creation.");
+        }
+    } else {
+        print::info("Switched to Curve Creation Mode.");
+    }
+}
+
+void CurveViewer::toggleMode() {
+    if (currentMode == ViewerMode::CurveCreation) {
+        setMode(ViewerMode::Simulation);
+    } else {
+        setMode(ViewerMode::CurveCreation);
+    }
+}
+
 void CurveViewer::tryLoadFont() {
     const std::vector<std::string> fontPaths = {
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
@@ -68,11 +77,18 @@ void CurveViewer::tryLoadFont() {
 }
 
 void CurveViewer::run() {
+    sf::Clock clock;
     while (window.isOpen()) {
+        float dt = clock.restart().asSeconds();
         processEvents();
+        update(dt);
         render();
     }
 }
+
+// ----------------------------------------------------------------------------
+// Event Handling
+// ----------------------------------------------------------------------------
 
 void CurveViewer::processEvents() {
     sf::Event event;
@@ -94,6 +110,54 @@ void CurveViewer::processEvents() {
 }
 
 void CurveViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f& mousePos) {
+    if (currentMode == ViewerMode::CurveCreation) {
+        handleCurveMousePress(button, mousePos);
+    } else {
+        // In simulation mode, allow moving existing control points
+        if (button == sf::Mouse::Left) {
+            int clickedIdx = findPointAt(mousePos);
+            if (clickedIdx != -1) {
+                draggedPointIndex = clickedIdx;
+            }
+        }
+    }
+}
+
+void CurveViewer::handleMouseMove(const sf::Vector2f& mousePos) {
+    handleCurveMouseMove(mousePos);
+}
+
+void CurveViewer::handleMouseRelease(sf::Mouse::Button button) {
+    handleCurveMouseRelease(button);
+}
+
+void CurveViewer::handleKeyPress(sf::Keyboard::Key key) {
+    // Global shortcut keys
+    if (key == sf::Keyboard::Escape) {
+        window.close();
+    } else if (key == sf::Keyboard::F11 || key == sf::Keyboard::F) {
+        toggleFullscreen();
+    } else if (key == sf::Keyboard::H || key == sf::Keyboard::F1) {
+        showHelp = !showHelp;
+    } else if (key == sf::Keyboard::Tab || key == sf::Keyboard::M) {
+        toggleMode();
+    } else if (key == sf::Keyboard::S) {
+        toggleSimulation();
+    } else {
+        // Dispatch to active mode subsystem
+        if (currentMode == ViewerMode::CurveCreation) {
+            handleCurveKeyPress(key);
+        } else {
+            handleSimulationKeyPress(key);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Curve Creation & Manipulation Subsystem
+// ----------------------------------------------------------------------------
+
+void CurveViewer::handleCurveMousePress(sf::Mouse::Button button, const sf::Vector2f& mousePos) {
     if (button == sf::Mouse::Left) {
         int clickedIdx = findPointAt(mousePos);
         if (clickedIdx != -1) {
@@ -104,7 +168,7 @@ void CurveViewer::handleMousePress(sf::Mouse::Button button, const sf::Vector2f&
     }
 }
 
-void CurveViewer::handleMouseMove(const sf::Vector2f& mousePos) {
+void CurveViewer::handleCurveMouseMove(const sf::Vector2f& mousePos) {
     if (draggedPointIndex >= 0 && draggedPointIndex < static_cast<int>(controlPoints.size())) {
         controlPoints[draggedPointIndex] = mousePos;
         rebuildSpline();
@@ -112,18 +176,14 @@ void CurveViewer::handleMouseMove(const sf::Vector2f& mousePos) {
     hoveredPointIndex = findPointAt(mousePos);
 }
 
-void CurveViewer::handleMouseRelease(sf::Mouse::Button button) {
+void CurveViewer::handleCurveMouseRelease(sf::Mouse::Button button) {
     if (button == sf::Mouse::Left) {
         draggedPointIndex = -1;
     }
 }
 
-void CurveViewer::handleKeyPress(sf::Keyboard::Key key) {
-    if (key == sf::Keyboard::Escape) {
-        window.close();
-    } else if (key == sf::Keyboard::F11 || key == sf::Keyboard::F) {
-        toggleFullscreen();
-    } else if (key == sf::Keyboard::Z || key == sf::Keyboard::BackSpace) {
+void CurveViewer::handleCurveKeyPress(sf::Keyboard::Key key) {
+    if (key == sf::Keyboard::Z || key == sf::Keyboard::BackSpace) {
         removeLastPoint();
     } else if (key == sf::Keyboard::C || key == sf::Keyboard::Delete) {
         clearPoints();
@@ -133,10 +193,6 @@ void CurveViewer::handleKeyPress(sf::Keyboard::Key key) {
         showTangents = !showTangents;
     } else if (key == sf::Keyboard::P) {
         showControlPolygon = !showControlPolygon;
-    } else if (key == sf::Keyboard::H || key == sf::Keyboard::F1) {
-        showHelp = !showHelp;
-    } else if (key == sf::Keyboard::S) {
-        playSimulation = !playSimulation;
     }
 }
 
@@ -146,18 +202,20 @@ void CurveViewer::addPoint(const sf::Vector2f& point) {
 
     size_t count = controlPoints.size();
     if (count < 4) {
-        std::cout << "Added point P" << (count - 1) << " (" << point.x << ", " << point.y
-                  << "). Need " << (4 - count) << " more for the first Bezier curve.\n";
+        print::info("Added point P" + std::to_string(count - 1) + " (" + std::to_string(static_cast<int>(point.x)) + ", " +
+                    std::to_string(static_cast<int>(point.y)) + "). Need " + std::to_string(4 - count) +
+                    " more for the first Bezier curve.");
     } else if (count == 4) {
-        std::cout << "4 points reached! Created initial Bezier curve.\n";
+        print::info("4 points reached! Created initial Bezier curve.");
     } else {
         size_t extra = (count - 4) % 3;
         if (extra == 0) {
             size_t segCount = 1 + (count - 4) / 3;
-            std::cout << "Added segment! Spline now has " << segCount << " segments (" << count << " points).\n";
+            print::info("Added segment! Spline now has " + std::to_string(segCount) + " segments (" +
+                        std::to_string(count) + " points).");
         } else {
-            std::cout << "Added point P" << (count - 1) << ". Need " << (3 - extra)
-                      << " more point(s) to complete next segment.\n";
+            print::info("Added point P" + std::to_string(count - 1) + ". Need " + std::to_string(3 - extra) +
+                        " more point(s) to complete next segment.");
         }
     }
 }
@@ -166,14 +224,14 @@ void CurveViewer::removeLastPoint() {
     if (!controlPoints.empty()) {
         controlPoints.pop_back();
         rebuildSpline();
-        std::cout << "Removed last point. " << controlPoints.size() << " point(s) remaining.\n";
+        print::info("Removed last point. " + std::to_string(controlPoints.size()) + " point(s) remaining.");
     }
 }
 
 void CurveViewer::clearPoints() {
     controlPoints.clear();
     rebuildSpline();
-    std::cout << "Cleared all control points.\n";
+    print::info("Cleared all control points.");
 }
 
 void CurveViewer::loadSampleSpline() {
@@ -192,7 +250,7 @@ void CurveViewer::loadSampleSpline() {
         sf::Vector2f(cx - scale, cy + scale * 0.4f)  // P6: End (closes loop)
     };
     rebuildSpline();
-    std::cout << "Loaded sample spline with 2 segments (7 points).\n";
+    print::info("Loaded sample spline with 2 segments (7 points).");
 }
 
 void CurveViewer::rebuildSpline() {
@@ -224,6 +282,9 @@ void CurveViewer::rebuildSpline() {
 
     hasSpline = true;
     splineVertices = spline.getVertices(60);
+
+    // Align agent to current t position on updated spline
+    agent.update(spline);
 }
 
 int CurveViewer::findPointAt(const sf::Vector2f& pos, float radius) const {
@@ -238,9 +299,90 @@ int CurveViewer::findPointAt(const sf::Vector2f& pos, float radius) const {
     return -1;
 }
 
+// ----------------------------------------------------------------------------
+// Agent Simulation Subsystem
+// ----------------------------------------------------------------------------
+
+void CurveViewer::handleSimulationKeyPress(sf::Keyboard::Key key) {
+    if (key == sf::Keyboard::Space) {
+        toggleSimulation();
+    } else if (key == sf::Keyboard::R) {
+        resetSimulation();
+    } else if (key == sf::Keyboard::Up || key == sf::Keyboard::Equal || key == sf::Keyboard::Add) {
+        float newSpeed = agent.getSpeed() + 0.0005f;
+        agent.setSpeed(newSpeed);
+        print::info("Agent speed increased to: " + std::to_string(agent.getSpeed()));
+    } else if (key == sf::Keyboard::Down || key == sf::Keyboard::Dash || key == sf::Keyboard::Subtract) {
+        float newSpeed = std::max(0.0002f, agent.getSpeed() - 0.0005f);
+        agent.setSpeed(newSpeed);
+        print::info("Agent speed decreased to: " + std::to_string(agent.getSpeed()));
+    } else if (key == sf::Keyboard::D) {
+        loadSampleSpline();
+    }
+}
+
+void CurveViewer::startSimulation() {
+    if (!hasSpline) {
+        print::warning("Cannot start simulation: need at least 4 points for a valid Bézier spline.");
+        return;
+    }
+    simulationRunning = true;
+    print::info("Simulation started.");
+}
+
+void CurveViewer::pauseSimulation() {
+    simulationRunning = false;
+    print::info("Simulation paused.");
+}
+
+void CurveViewer::toggleSimulation() {
+    if (simulationRunning) {
+        pauseSimulation();
+    } else {
+        startSimulation();
+    }
+}
+
+void CurveViewer::resetSimulation() {
+    agent.reset();
+    if (hasSpline) {
+        agent.update(spline);
+    }
+    print::info("Simulation reset to spline origin.");
+}
+
+void CurveViewer::update(float dt) {
+    if (simulationRunning && hasSpline) {
+        updateSimulation(dt);
+    }
+}
+
+void CurveViewer::updateSimulation(float /* dt */) {
+    agent.update(spline);
+}
+
+// ----------------------------------------------------------------------------
+// Rendering Pipeline
+// ----------------------------------------------------------------------------
+
 void CurveViewer::render() {
     window.clear(sf::Color(25, 25, 30));
 
+    // 1. Render Curve Creation Elements (Spline track, polygon, tangents, control points)
+    renderCurveElements();
+
+    // 2. Render Agent Simulation Elements (Traffic agent)
+    renderSimulationElements();
+
+    // 3. Render HUD & UI Overlay
+    if (showHelp) {
+        drawHUD();
+    }
+
+    window.display();
+}
+
+void CurveViewer::renderCurveElements() {
     if (showControlPolygon) {
         drawControlPolygon();
     }
@@ -252,16 +394,12 @@ void CurveViewer::render() {
     }
 
     drawControlPoints();
+}
 
-    if (playSimulation && hasSpline) {
-        drawAgent();
+void CurveViewer::renderSimulationElements() {
+    if (hasSpline) {
+        window.draw(agent);
     }
-
-    if (showHelp) {
-        drawHUD();
-    }
-
-    window.display();
 }
 
 void CurveViewer::drawControlPolygon() {
@@ -283,7 +421,7 @@ void CurveViewer::drawControlPolygon() {
 void CurveViewer::drawCurve() {
     if (!hasSpline || splineVertices.getVertexCount() == 0) return;
 
-    // Draw the curve with bright color
+    // Draw the curve roadway with a clean bright cyan color
     for (size_t i = 0; i < splineVertices.getVertexCount(); ++i) {
         splineVertices[i].color = sf::Color(100, 220, 255);
     }
@@ -369,8 +507,16 @@ void CurveViewer::drawHUD() {
     text.setFillColor(sf::Color(220, 220, 230));
 
     std::ostringstream ss;
-    size_t count = controlPoints.size();
 
+    // Mode Banner Header
+    if (currentMode == ViewerMode::CurveCreation) {
+        ss << "[ MODE: CURVE CREATION ]\n";
+    } else {
+        ss << "[ MODE: AGENT SIMULATION - " << (simulationRunning ? "RUNNING" : "PAUSED") << " ]\n";
+    }
+
+    // Spline & Curve Status
+    size_t count = controlPoints.size();
     if (count == 0) {
         ss << "Status: Click to place P0 (Start Point)\n";
     } else if (count == 1) {
@@ -393,42 +539,37 @@ void CurveViewer::drawHUD() {
         }
     }
 
-    ss << "Controls: [Left-Click] Add/Drag  [Z] Undo  [C] Clear  [D] Demo  [T] Tangents  [P] Polygon  [S] Start/Pause Simulation  [F11] Fullscreen  [H] Help  [Esc] Exit";
+    // Simulation Stats
+    if (hasSpline) {
+        std::ostringstream simStream;
+        simStream.precision(3);
+        simStream << std::fixed;
+        simStream << "Agent: t=" << agent.getT() << " | Speed=" << agent.getSpeed()
+                  << " | Heading=" << static_cast<int>(agent.getRotation()) << " deg | Sim: "
+                  << (simulationRunning ? "Running" : "Paused") << "\n";
+        ss << simStream.str();
+    }
+
+    // Contextual Controls
+    if (currentMode == ViewerMode::CurveCreation) {
+        ss << "Curve: [Left-Click] Add/Drag  [Z] Undo  [C] Clear  [D] Demo  [T] Tangents  [P] Polygon\n";
+        ss << "Global: [Tab/M] Switch Mode  [S] Start/Pause Sim  [F11] Fullscreen  [H] Help  [Esc] Exit";
+    } else {
+        ss << "Sim: [Space/S] Play/Pause  [R] Reset Agent  [Up/Down] Speed (+/-)\n";
+        ss << "Global: [Tab/M] Switch Mode  [D] Load Demo Spline  [F11] Fullscreen  [H] Help  [Esc] Exit";
+    }
 
     text.setString(ss.str());
     text.setPosition(14.0f, 14.0f);
 
-    // Background panel for readability
+    // Background panel with mode-colored outline for readability
     sf::FloatRect bounds = text.getGlobalBounds();
-    sf::RectangleShape bg(sf::Vector2f(bounds.width + 16.f, bounds.height + 12.f));
+    sf::RectangleShape bg(sf::Vector2f(bounds.width + 16.f, bounds.height + 14.f));
     bg.setPosition(bounds.left - 8.f, bounds.top - 6.f);
-    bg.setFillColor(sf::Color(15, 15, 20, 200));
-    bg.setOutlineColor(sf::Color(60, 60, 80));
-    bg.setOutlineThickness(1.0f);
+    bg.setFillColor(sf::Color(15, 15, 20, 215));
+    bg.setOutlineColor(currentMode == ViewerMode::CurveCreation ? sf::Color(60, 140, 220) : sf::Color(50, 200, 100));
+    bg.setOutlineThickness(1.5f);
 
     window.draw(bg);
     window.draw(text);
-}
-
-void CurveViewer::drawAgent() {
-    agentT += agentSpeed;
-    if (agentT > 1.0f) {
-        agentT = 0.0f;  // Loop back to the start of the spline
-    }
-
-    // Fetch current position and tangent
-    sf::Vector2f pos = spline.eval(agentT);
-    sf::Vector2f tan = spline.evalTangent(agentT);
-
-    // Calculate rotation in degrees
-    float angle = std::atan2(tan.y, tan.x) * 180.0f / mathConstants::PI;
-
-    // Draw and orient the agent
-    sf::RectangleShape agent(sf::Vector2f(32.f, 16.f));
-    agent.setOrigin(16.f, 8.f);
-    agent.setPosition(pos);
-    agent.setRotation(angle);
-    agent.setFillColor(sf::Color(255, 50, 50));
-
-    window.draw(agent);
 }
